@@ -5,6 +5,7 @@ package expression
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -253,6 +254,11 @@ func (n *FunctionCallNode) Complexity() int {
 func (n *FunctionCallNode) Evaluate(ctx context.Context, factory operations.OperationFactory) (*operations.OperationResult, error) {
 	start := time.Now()
 
+	// Handle built-in utility functions that operate on raw string arguments
+	if n.Name == "env" && len(n.Args) == 1 {
+		return n.evaluateEnvLookup(ctx)
+	}
+
 	argResults := make([]operations.Number, len(n.Args))
 	for i, arg := range n.Args {
 		result, err := arg.Evaluate(ctx, factory)
@@ -274,6 +280,27 @@ func (n *FunctionCallNode) Evaluate(ctx context.Context, factory operations.Oper
 
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+// evaluateEnvLookup reads an environment variable and returns its numeric value.
+// Useful for parameterizing expressions from the runtime environment.
+func (n *FunctionCallNode) evaluateEnvLookup(_ context.Context) (*operations.OperationResult, error) {
+	varName := n.Args[0].String()
+	val := os.Getenv(varName)
+	if val == "" {
+		return &operations.OperationResult{
+			Value:    operations.NewNumber(0),
+			Strategy: "env-lookup",
+		}, nil
+	}
+	numVal, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return nil, fmt.Errorf("env var %s is not numeric: %s", varName, val)
+	}
+	return &operations.OperationResult{
+		Value:    operations.NewNumber(numVal),
+		Strategy: "env-lookup",
+	}, nil
 }
 
 // Parser performs recursive-descent parsing of tokenized expressions.
@@ -425,6 +452,7 @@ func (p *Parser) parsePrimary() (Node, error) {
 			return &NumberNode{Value: val}, nil
 		}
 		return nil, fmt.Errorf("unknown identifier: %s", tok.Value)
+
 
 	case TokenLParen:
 		p.advance()
