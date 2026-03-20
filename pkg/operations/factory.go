@@ -42,6 +42,23 @@ func (f *DefaultOperationFactory) registerBuiltins() {
 		return NewPowerOperation(getFloatOrDefault(cfg, "max_exponent", 1000), getBoolOrDefault(cfg, "overflow_protect", true), getBoolOrDefault(cfg, "audit", true))
 	})
 
+	// Safe variants
+	f.Register("safe_add", func(cfg map[string]interface{}) Operation {
+		return NewSafeAddOperation(getIntOrDefault(cfg, "precision", 64), getBoolOrDefault(cfg, "audit", true))
+	})
+	f.Register("safe_subtract", func(cfg map[string]interface{}) Operation {
+		return NewSafeSubtractOperation(getIntOrDefault(cfg, "precision", 64), getBoolOrDefault(cfg, "audit", true))
+	})
+	f.Register("safe_multiply", func(cfg map[string]interface{}) Operation {
+		return NewSafeMultiplyOperation(getIntOrDefault(cfg, "precision", 64), getFloatOrDefault(cfg, "max_value", 1e15), getBoolOrDefault(cfg, "audit", true))
+	})
+	f.Register("safe_divide", func(cfg map[string]interface{}) Operation {
+		return NewSafeDivideOperation(getIntOrDefault(cfg, "precision", 64), getFloatOrDefault(cfg, "epsilon", 1e-10), getBoolOrDefault(cfg, "audit", true))
+	})
+	f.Register("safe_power", func(cfg map[string]interface{}) Operation {
+		return NewSafePowerOperation(getFloatOrDefault(cfg, "max_base", 1e6), getFloatOrDefault(cfg, "max_exponent", 100), getBoolOrDefault(cfg, "audit", true))
+	})
+
 	// Trig
 	f.Register("sin", func(cfg map[string]interface{}) Operation {
 		return NewSineOperation(Radians, getBoolOrDefault(cfg, "audit", true))
