@@ -47,6 +47,7 @@ type OperationResult struct {
 	Retries     int
 	AuditTrail  []AuditEntry
 	Warnings    []string
+	Precision   *PrecisionConfig // nil = standard precision (default behavior preserved)
 }
 
 // AuditEntry records a single step in the computation audit trail.
