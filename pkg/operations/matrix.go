@@ -283,10 +283,9 @@ func (s *LinearSolver) Solve(a *Matrix, b []float64) ([]float64, error) {
 		}
 	}
 
-	// Back substitution — BUG: loop starts from n instead of n-1,
-	// causing index out of bounds panic
+	// Back substitution
 	x := make([]float64, n)
-	for i := n; i >= 0; i-- {
+	for i := n - 1; i >= 0; i-- {
 		x[i] = aug[i][n]
 		for j := i + 1; j < n; j++ {
 			x[i] -= aug[i][j] * x[j]
