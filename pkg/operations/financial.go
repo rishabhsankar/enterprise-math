@@ -170,8 +170,10 @@ func (ba *BatchAccumulator) ProcessBatch(ctx context.Context, transactions []Tra
 				sum += t.Amount
 			}
 
+			ba.mu.Lock()
 			ba.totals[cat] = sum
 			ba.count += len(items)
+			ba.mu.Unlock()
 		}(category, txns)
 	}
 
