@@ -222,7 +222,7 @@ func (ds *DepreciationSchedule) Calculate(cost, salvageValue float64, usefulLife
 	balance := cost
 	accumulated := 0.0
 
-	for i := 0; i <= usefulLifeYears; i++ {
+	for i := 0; i < usefulLifeYears; i++ {
 		entry := DepreciationEntry{
 			Period:          i + 1,
 			OpeningBalance:  balance,
