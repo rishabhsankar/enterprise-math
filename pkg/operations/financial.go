@@ -1,4 +1,4 @@
-// Package operations — financial module v2.
+// Package operations — financial module v3.
 package operations
 
 import (
