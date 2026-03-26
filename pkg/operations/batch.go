@@ -98,7 +98,6 @@ func (bp *BatchProcessor) ProcessBatch(ctx context.Context, items []BatchItem) (
 }
 
 // ComputeWeightedAverage calculates a weighted average from batch results.
-// BUG: Dereferences result without nil check — will panic if any operation failed.
 func (bp *BatchProcessor) ComputeWeightedAverage(results []*OperationResult, weights []float64) (*OperationResult, error) {
 	if len(results) != len(weights) {
 		return nil, fmt.Errorf("results and weights must have same length")
@@ -109,9 +108,15 @@ func (bp *BatchProcessor) ComputeWeightedAverage(results []*OperationResult, wei
 	weightedSum := 0.0
 
 	for i, r := range results {
-		// BUG: r can be nil if the operation failed, this will panic
+		if r == nil {
+			continue
+		}
 		weightedSum += r.Value.Value * weights[i]
 		totalWeight += weights[i]
+	}
+
+	if totalWeight == 0 {
+		return nil, fmt.Errorf("no valid results to average")
 	}
 
 	avg := weightedSum / totalWeight
@@ -147,11 +152,16 @@ func (bp *BatchProcessor) NormalizeResults(results []*OperationResult) ([]Number
 		}
 	}
 
-	// BUG: If all values are the same, rangeVal is 0 → division by zero → NaN
 	rangeVal := maxVal - minVal
 	normalized := make([]Number, len(values))
-	for i, v := range values {
-		normalized[i] = NewNumber((v - minVal) / rangeVal)
+	if rangeVal == 0 {
+		for i := range values {
+			normalized[i] = NewNumber(0.5)
+		}
+	} else {
+		for i, v := range values {
+			normalized[i] = NewNumber((v - minVal) / rangeVal)
+		}
 	}
 
 	return normalized, nil
