@@ -8,9 +8,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/rishabhsankar/enterprise-math/pkg/admin"
 	"github.com/rishabhsankar/enterprise-math/pkg/cache"
 	"github.com/rishabhsankar/enterprise-math/pkg/config"
 	"github.com/rishabhsankar/enterprise-math/pkg/expression"
+	"github.com/rishabhsankar/enterprise-math/pkg/httpapi"
 	"github.com/rishabhsankar/enterprise-math/pkg/logging"
 	"github.com/rishabhsankar/enterprise-math/pkg/metrics"
 	"github.com/rishabhsankar/enterprise-math/pkg/middleware"
@@ -20,6 +22,7 @@ import (
 	"github.com/rishabhsankar/enterprise-math/pkg/plugin"
 	"github.com/rishabhsankar/enterprise-math/pkg/strategy"
 	"github.com/rishabhsankar/enterprise-math/pkg/validation"
+	"github.com/rishabhsankar/enterprise-math/pkg/webhook"
 )
 
 // DemonstrationResult captures a single demonstration computation.
@@ -43,6 +46,9 @@ type Application struct {
 	profileManager  *config.ProfileManager
 	auditLog        *middleware.AuditLog
 	computeStrategy operations.ComputationStrategy
+	httpServer      *httpapi.Server
+	webhookDispatcher *webhook.Dispatcher
+	admin           *admin.Admin
 }
 
 // NewApplication bootstraps the entire Enterprise Math Platform.
@@ -110,12 +116,31 @@ func (app *Application) initializeComponents() error {
 		return fmt.Errorf("plugin loading failed: %w", err)
 	}
 
+	// Webhook dispatcher
+	app.webhookDispatcher = webhook.NewDispatcher(app.config, app.logger)
+
+	// HTTP control plane
+	app.httpServer = httpapi.NewServer(app.config, app.factory, app.logger)
+
+	// Admin diagnostics
+	app.admin = admin.NewAdmin(app.config, app.logger)
+
 	app.logger.Info("All components initialized", map[string]interface{}{
 		"operations": len(app.factory.List()),
 		"cache":      "tiered-lru",
 		"strategy":   app.computeStrategy.Name(),
 	})
 
+	return nil
+}
+
+// StartHTTP runs the HTTP control plane in a goroutine bound to ctx.
+func (app *Application) StartHTTP(ctx context.Context) error {
+	go func() {
+		if err := app.httpServer.ListenAndServe(ctx); err != nil {
+			app.logger.Error("http server exited", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
