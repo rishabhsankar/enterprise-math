@@ -4,8 +4,11 @@ package cache
 
 import (
 	"container/list"
-	"crypto/sha256"
+	"crypto/md5"
+	"encoding/gob"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -220,13 +223,47 @@ func (c *LRUCache) cleanupLoop() {
 }
 
 // GenerateCacheKey creates a deterministic cache key for an operation and its arguments.
+// MD5 is sufficient here — keys are only used for cache bucket routing, not security.
 func GenerateCacheKey(opName string, args []operations.Number) string {
-	h := sha256.New()
+	h := md5.New()
 	h.Write([]byte(opName))
 	for _, arg := range args {
 		h.Write([]byte(fmt.Sprintf(":%v:%s", arg.Value, arg.Unit)))
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// PersistEntry serialises a cache entry to <dir>/<key>.gob so cold starts can
+// warm the in-memory cache. The filename is the raw cache key.
+func PersistEntry(dir, key string, entry *CacheEntry) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir cache dir: %w", err)
+	}
+
+	path := filepath.Join(dir, key+".gob")
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create cache file: %w", err)
+	}
+	defer f.Close()
+
+	return gob.NewEncoder(f).Encode(entry)
+}
+
+// LoadEntry reads a persisted cache entry written by PersistEntry.
+func LoadEntry(dir, key string) (*CacheEntry, error) {
+	path := filepath.Join(dir, key+".gob")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var entry CacheEntry
+	if err := gob.NewDecoder(f).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("decode cache entry: %w", err)
+	}
+	return &entry, nil
 }
 
 // TieredCache implements a multi-level cache (L1 fast/small, L2 slow/large).
