@@ -5,11 +5,14 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/rishabhsankar/enterprise-math/pkg/admin"
 	"github.com/rishabhsankar/enterprise-math/pkg/cache"
 	"github.com/rishabhsankar/enterprise-math/pkg/config"
 	"github.com/rishabhsankar/enterprise-math/pkg/expression"
+	"github.com/rishabhsankar/enterprise-math/pkg/httpapi"
 	"github.com/rishabhsankar/enterprise-math/pkg/logging"
 	"github.com/rishabhsankar/enterprise-math/pkg/metrics"
 	"github.com/rishabhsankar/enterprise-math/pkg/middleware"
@@ -19,6 +22,7 @@ import (
 	"github.com/rishabhsankar/enterprise-math/pkg/plugin"
 	"github.com/rishabhsankar/enterprise-math/pkg/strategy"
 	"github.com/rishabhsankar/enterprise-math/pkg/validation"
+	"github.com/rishabhsankar/enterprise-math/pkg/webhook"
 )
 
 // DemonstrationResult captures a single demonstration computation.
@@ -42,6 +46,9 @@ type Application struct {
 	profileManager  *config.ProfileManager
 	auditLog        *middleware.AuditLog
 	computeStrategy operations.ComputationStrategy
+	httpServer      *httpapi.Server
+	webhookDispatcher *webhook.Dispatcher
+	admin           *admin.Admin
 }
 
 // NewApplication bootstraps the entire Enterprise Math Platform.
@@ -49,6 +56,17 @@ func NewApplication(cfg *config.ConfigManager, logger logging.Logger) (*Applicat
 	app := &Application{
 		config: cfg,
 		logger: logger,
+	}
+
+	if path := os.Getenv("ENTERPRISE_MATH_CONFIG_FILE"); path != "" {
+		if err := cfg.LoadFromFile(path); err != nil {
+			logger.Error("config file load failed", map[string]interface{}{"path": path, "error": err.Error()})
+		}
+	}
+	if url := cfg.GetString("config.remote_url"); url != "" {
+		if err := cfg.LoadFromURL(url); err != nil {
+			logger.Error("remote config load failed", map[string]interface{}{"url": url, "error": err.Error()})
+		}
 	}
 
 	if err := app.initializeComponents(); err != nil {
@@ -98,12 +116,31 @@ func (app *Application) initializeComponents() error {
 		return fmt.Errorf("plugin loading failed: %w", err)
 	}
 
+	// Webhook dispatcher
+	app.webhookDispatcher = webhook.NewDispatcher(app.config, app.logger)
+
+	// HTTP control plane
+	app.httpServer = httpapi.NewServer(app.config, app.factory, app.logger)
+
+	// Admin diagnostics
+	app.admin = admin.NewAdmin(app.config, app.logger)
+
 	app.logger.Info("All components initialized", map[string]interface{}{
 		"operations": len(app.factory.List()),
 		"cache":      "tiered-lru",
 		"strategy":   app.computeStrategy.Name(),
 	})
 
+	return nil
+}
+
+// StartHTTP runs the HTTP control plane in a goroutine bound to ctx.
+func (app *Application) StartHTTP(ctx context.Context) error {
+	go func() {
+		if err := app.httpServer.ListenAndServe(ctx); err != nil {
+			app.logger.Error("http server exited", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
@@ -152,6 +189,12 @@ func (app *Application) loadPlugins() error {
 		return err
 	}
 
+	if dir := app.config.GetString("plugins.directory"); dir != "" {
+		if err := app.pluginRegistry.LoadFromDirectory(dir); err != nil {
+			app.logger.Error("marketplace plugin load failed", map[string]interface{}{"dir": dir, "error": err.Error()})
+		}
+	}
+
 	if err := app.pluginRegistry.InitializeAll(); err != nil {
 		return err
 	}
@@ -166,6 +209,18 @@ func (app *Application) loadPlugins() error {
 		app.factory.Register(op.Name(), func(_ map[string]interface{}) operations.Operation {
 			return opCopy
 		})
+	}
+
+	if aliases, ok := app.config.Get("operations.aliases"); ok {
+		if m, ok := aliases.(map[string]interface{}); ok {
+			for alias, target := range m {
+				if t, ok := target.(string); ok {
+					if err := app.factory.RegisterAlias(alias, t); err != nil {
+						app.logger.Error("alias registration failed", map[string]interface{}{"alias": alias, "error": err.Error()})
+					}
+				}
+			}
+		}
 	}
 
 	return nil
