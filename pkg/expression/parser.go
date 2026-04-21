@@ -481,3 +481,57 @@ func ParseExpression(input string) (Node, error) {
 	parser := NewParser(tokens)
 	return parser.Parse()
 }
+
+// EvalString parses and evaluates an expression against the provided factory.
+// Convenience wrapper for scripting/REPL contexts.
+func EvalString(ctx context.Context, input string, factory operations.OperationFactory) (*operations.OperationResult, error) {
+	node, err := ParseExpression(input)
+	if err != nil {
+		return nil, err
+	}
+	return node.Evaluate(ctx, factory)
+}
+
+// SafeEval parses and evaluates an expression, restricting which functions may
+// be invoked. allowedFuncs is matched case-insensitively for user convenience
+// (sin == SIN == Sin).
+func SafeEval(ctx context.Context, input string, factory operations.OperationFactory, allowedFuncs []string) (*operations.OperationResult, error) {
+	node, err := ParseExpression(input)
+	if err != nil {
+		return nil, err
+	}
+
+	allowed := make(map[string]struct{}, len(allowedFuncs))
+	for _, n := range allowedFuncs {
+		allowed[strings.ToLower(n)] = struct{}{}
+	}
+
+	if err := checkAllowed(node, allowed); err != nil {
+		return nil, err
+	}
+	return node.Evaluate(ctx, factory)
+}
+
+func checkAllowed(n Node, allowed map[string]struct{}) error {
+	switch v := n.(type) {
+	case *FunctionCallNode:
+		if _, ok := allowed[strings.ToLower(v.Name)]; !ok {
+			return fmt.Errorf("function %q not in allowlist", v.Name)
+		}
+		for _, a := range v.Args {
+			if err := checkAllowed(a, allowed); err != nil {
+				return err
+			}
+		}
+	case *BinaryNode:
+		if err := checkAllowed(v.Left, allowed); err != nil {
+			return err
+		}
+		if err := checkAllowed(v.Right, allowed); err != nil {
+			return err
+		}
+	case *UnaryNode:
+		return checkAllowed(v.Operand, allowed)
+	}
+	return nil
+}
