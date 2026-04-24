@@ -113,11 +113,28 @@ func (f *DefaultOperationFactory) Create(name string, config map[string]interfac
 	return constructor(config), nil
 }
 
-// Register adds a new operation constructor to the factory.
+// Register adds a new operation constructor to the factory, replacing any
+// previous constructor under the same name. This supports plugins that want
+// to specialise built-in operations (e.g. swap `add` for a fixed-precision
+// variant) without needing to pick a unique name.
 func (f *DefaultOperationFactory) Register(name string, constructor func(map[string]interface{}) Operation) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.constructors[name] = constructor
+	delete(f.cache, name)
+}
+
+// RegisterAlias makes `alias` resolve to the same constructor as `target`.
+// Aliases are useful for compatibility shims (e.g. `sum` → `add`).
+func (f *DefaultOperationFactory) RegisterAlias(alias, target string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ctor, ok := f.constructors[target]
+	if !ok {
+		return fmt.Errorf("alias target %q not registered", target)
+	}
+	f.constructors[alias] = ctor
+	return nil
 }
 
 // List returns the names of all registered operations.
