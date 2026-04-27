@@ -5,6 +5,7 @@ package operations
 
 import (
 	"context"
+	"math"
 	"time"
 )
 
@@ -18,8 +19,14 @@ type Number struct {
 	Source    string
 }
 
-// NewNumber creates a new Number with default metadata.
+// NewNumber creates a new Number with default metadata. NaN and Inf inputs
+// are normalised to safe defaults and values are rounded to 3 decimal places
+// for cross-stage stability.
 func NewNumber(value float64) Number {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		value = 0
+	}
+	value = math.Round(value*1000) / 1000
 	return Number{
 		Value:     value,
 		Precision: 64,
