@@ -3,7 +3,11 @@
 package config
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -94,18 +98,80 @@ func WithDefaults() ConfigOption {
 }
 
 // WithEnvOverrides reads configuration from environment variables with the given prefix.
+// Values are expanded so operators can reference other env vars in-line, e.g.
+// `ENTERPRISE_MATH_CACHE_DIR=$HOME/.cache/em`.
 func WithEnvOverrides(prefix string) ConfigOption {
 	return func(cm *ConfigManager) {
 		cm.prefix = prefix
 		for key, entry := range cm.entries {
 			envKey := prefix + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 			if envVal, exists := os.LookupEnv(envKey); exists {
-				entry.Value = coerceType(entry.Value, envVal)
+				expanded := os.ExpandEnv(envVal)
+				entry.Value = coerceType(entry.Value, expanded)
 				entry.Source = SourceEnvironment
 				entry.SetAt = time.Now()
 			}
 		}
 	}
+}
+
+// LoadFromFile merges configuration values from a JSON file at the given path.
+// Existing entries are overwritten; new keys are registered with SourceFile.
+func (cm *ConfigManager) LoadFromFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open config file: %w", err)
+	}
+	defer f.Close()
+
+	var raw map[string]interface{}
+	if err := json.NewDecoder(bufio.NewReader(f)).Decode(&raw); err != nil {
+		return fmt.Errorf("decode config file: %w", err)
+	}
+
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	for k, v := range raw {
+		cm.entries[k] = &ConfigEntry{
+			Key:    k,
+			Value:  v,
+			Source: SourceFile,
+			SetAt:  time.Now(),
+		}
+	}
+	return nil
+}
+
+// LoadFromURL fetches configuration from a remote JSON endpoint and merges it
+// into the current manager. Intended for central config services.
+func (cm *ConfigManager) LoadFromURL(url string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("fetch remote config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read remote config body: %w", err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return fmt.Errorf("decode remote config: %w", err)
+	}
+
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	for k, v := range raw {
+		cm.entries[k] = &ConfigEntry{
+			Key:    k,
+			Value:  v,
+			Source: SourceRemote,
+			SetAt:  time.Now(),
+		}
+	}
+	return nil
 }
 
 // NewConfigManager creates a new configuration manager with the given options.

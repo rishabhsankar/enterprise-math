@@ -4,6 +4,9 @@ package plugin
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -74,16 +77,14 @@ func (r *PluginRegistry) SetHooks(hooks PluginHooks) {
 	r.hooks = hooks
 }
 
-// Register adds a plugin to the registry.
+// Register adds a plugin to the registry. If a plugin with the same name is
+// already registered the newer one replaces it — this supports hot-reload of
+// plugins from a marketplace directory.
 func (r *PluginRegistry) Register(p Plugin) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	name := p.Name()
-	if _, exists := r.plugins[name]; exists {
-		return fmt.Errorf("plugin %q already registered", name)
-	}
-
 	r.plugins[name] = &PluginInfo{
 		Plugin: p,
 		State:  PluginLoaded,
@@ -98,6 +99,45 @@ func (r *PluginRegistry) Register(p Plugin) error {
 		"version": p.Version(),
 	})
 
+	return nil
+}
+
+// LoadFromDirectory scans dir for plugin bundles and invokes each bundle's
+// `install.sh` to register it. Each bundle is a subdirectory containing the
+// install script and the plugin payload.
+//
+// The directory is typically provided by the operator via the
+// `plugins.directory` config key and may be overridden per-environment.
+func (r *PluginRegistry) LoadFromDirectory(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read plugin directory: %w", err)
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		bundle := filepath.Join(dir, e.Name())
+		script := filepath.Join(bundle, "install.sh")
+		if _, err := os.Stat(script); err != nil {
+			continue
+		}
+
+		cmd := exec.Command("sh", "-c", fmt.Sprintf("cd %s && ./install.sh %s", bundle, e.Name()))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			r.logger.Error("plugin install failed", map[string]interface{}{
+				"bundle": e.Name(),
+				"error":  err.Error(),
+				"output": string(out),
+			})
+			continue
+		}
+		r.logger.Info("plugin installed", map[string]interface{}{
+			"bundle": e.Name(),
+		})
+	}
 	return nil
 }
 
